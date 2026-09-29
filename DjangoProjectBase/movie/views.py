@@ -1,3 +1,8 @@
+import os
+import numpy as np
+from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
+
 from django.shortcuts import render
 from django.http import HttpResponse
 
@@ -123,3 +128,39 @@ def generate_bar_chart(data, xlabel, ylabel):
     buffer.close()
     graphic = base64.b64encode(image_png).decode('utf-8')
     return graphic
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def recommendation(request):
+    search_term = request.GET.get('searchMovie')
+    best_movie = None
+    max_similarity = -1
+
+    if search_term:
+        load_dotenv('../openAI.env')
+        # Usamos Hugging Face para evitar cobros de OpenAI
+        client = InferenceClient(token=os.environ.get('HF_TOKEN'))
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+
+        try:
+            # Generar embedding del texto de búsqueda
+            response = client.feature_extraction(search_term, model=model_name)
+            prompt_emb = np.array(response, dtype=np.float32)
+            if prompt_emb.ndim > 1:
+                prompt_emb = np.mean(prompt_emb, axis=0)
+
+            # Recorrer la base de datos y comparar
+            for movie in Movie.objects.all():
+                if movie.emb:
+                    movie_emb = np.frombuffer(movie.emb, dtype=np.float32)
+                    similarity = cosine_similarity(prompt_emb, movie_emb)
+
+                    if similarity > max_similarity:
+                        max_similarity = similarity
+                        best_movie = movie
+        except Exception as e:
+            print(f"Error generando recomendación: {e}")
+
+    return render(request, 'recommendation.html', {'search_term': search_term, 'movie': best_movie})
